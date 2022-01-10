@@ -8,12 +8,10 @@ import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
-import org.apache.hadoop.mapreduce.lib.input.FileSplit;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.GenericOptionsParser;
-import org.penistrong.bayesclassifier.inputformat.ClassFileSumCombineInputFormat;
 import org.penistrong.bayesclassifier.inputformat.ClassWordCountCombineTextInputFormat;
 import org.penistrong.bayesclassifier.inputformat.ClassWordCountRecordReaderWrapper;
-import org.penistrong.bayesclassifier.outputformat.ClassWordCountOutputFormat;
 
 import java.io.IOException;
 import java.util.StringTokenizer;
@@ -28,17 +26,6 @@ public class TrainPosteriorProbability {
         private Text pair = new Text();
         private final static IntWritable one = new IntWritable(1);
 
-        /*
-        @Override
-        protected void setup(Mapper<LongWritable, Text, Text, IntWritable>.Context context) throws IOException, InterruptedException {
-            //InputSplit split = context.getInputSplit();
-            //获取当前输入的split的路径
-            //Path path = ((FileSplit) split).getPath();
-            //将其父目录名作为类别名保存到私有变量wordClass中
-            //wordClass.set(path.getParent().getName());
-            wordClass.set(context.getConfiguration().get("mapreduce.map.classwordcount.currentclass", "wtf!!!"));
-        }*/
-
         /**
          * 每读取1个split，按行读内容，分词后输出<类别+单词, 出现次数>的键值对
          * 这里即<<Class, Word>, 1>注意前面的<Class, Word>使用一个Text存储，用分隔符":"进行分割
@@ -51,12 +38,11 @@ public class TrainPosteriorProbability {
         public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
             //利用同一JVM下的RecordReader.class中的静态方法得到当前(CombineFileSplit)切片中的实际小文件的路径
             Path filePath = ClassWordCountRecordReaderWrapper.getCurrentSmallFilePath();
-            //获取其父目录名
+            //获取其父目录名(就是其类别C)
             String wordClass = filePath.getParent().getName();
 
             StringTokenizer itr = new StringTokenizer(value.toString());
             while (itr.hasMoreTokens()) {
-                //使用setup时保存的当前分片所属类别名,去组装"类别,单词",key是偏移量用不到
                 pair.set(wordClass + ":" + itr.nextToken());
                 context.write(pair, one);
             }
@@ -86,7 +72,7 @@ public class TrainPosteriorProbability {
         private IntWritable count = new IntWritable();
 
         /**
-         * 与Combiner不同的是，要把键拆分为以"\t"分割写入文件
+         * 与PairSumCombiner不同的是，要把键拆分为以"\t"分割写入文件
          * @param key:
          * @param values
          * @param context
@@ -114,8 +100,7 @@ public class TrainPosteriorProbability {
 
         Job job = Job.getInstance(conf, "Class Word Count");
         job.setJarByClass(TrainPosteriorProbability.class);
-        //job.setInputFormatClass(ClassWordCountCombineTextInputFormat.class);
-        //测试:使用CombineTextInputFormat, 在map时处理切分机制
+        //使用自定义的类似CombineTextInputFormat的输入格式
         job.setInputFormatClass(ClassWordCountCombineTextInputFormat.class);
         //设置每个切片的最大大小为4MB，防止所有训练集的所有小文件全部放到1个CombineSplit(这样导致只有1个Mapper运作)
         ClassWordCountCombineTextInputFormat.setMaxInputSplitSize(job, 4194304);
@@ -127,15 +112,14 @@ public class TrainPosteriorProbability {
 
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(IntWritable.class);
-        //job.setOutputFormatClass(ClassWordCountOutputFormat.class);
 
         //将给定的多个数据集源路径添加到文件输入路径中
         for (int i = 0; i < givenArgs.length - 1;i++)
-            ClassFileSumCombineInputFormat.addInputPath(job, new Path(givenArgs[i]));
+            ClassWordCountCombineTextInputFormat.addInputPath(job, new Path(givenArgs[i]));
         //!设定递归读取树形目录结构下的所有文件
-        ClassFileSumCombineInputFormat.setInputDirRecursive(job, true);
+        ClassWordCountCombineTextInputFormat.setInputDirRecursive(job, true);
         //设定输出路径
-        ClassWordCountOutputFormat.setOutputPath(job, new Path(givenArgs[givenArgs.length - 1]));
+        FileOutputFormat.setOutputPath(job, new Path(givenArgs[givenArgs.length - 1]));
 
         System.exit(job.waitForCompletion(true) ? 0 : 1);
     }

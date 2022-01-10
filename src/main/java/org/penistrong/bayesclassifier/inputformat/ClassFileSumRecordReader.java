@@ -16,7 +16,6 @@ public class ClassFileSumRecordReader extends RecordReader<Text, IntWritable> {
 
     private CombineFileSplit combineFileSplit;
     private FileSplit split;    //每个小文件
-    private Path[] paths;       //小文件对应的路径
     private int currentIndex;   //小文件在合并的CombineFileSplit中的索引
     //private Configuration conf;
     private Text key = new Text();
@@ -40,12 +39,11 @@ public class ClassFileSumRecordReader extends RecordReader<Text, IntWritable> {
                 combineFileSplit.getLength(currentIndex),
                 combineFileSplit.getLocations()
         );
-        this.paths = this.combineFileSplit.getPaths();
     }
 
     @Override
     public boolean nextKeyValue() throws IOException, InterruptedException {
-        if (currentIndex >= 0 && currentIndex < this.paths.length) {
+        if (currentIndex >= 0 && currentIndex < this.combineFileSplit.getNumPaths()) {
             if (!processed) {
                 //获取每个小文件所在的路径
                 Path path = this.split.getPath();
