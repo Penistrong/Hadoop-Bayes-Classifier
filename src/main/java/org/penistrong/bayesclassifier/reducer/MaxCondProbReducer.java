@@ -2,6 +2,8 @@ package org.penistrong.bayesclassifier.reducer;
 
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.log4j.Logger;
+import org.penistrong.bayesclassifier.NaiveBayesClassifier;
 
 import java.io.IOException;
 import java.util.*;
@@ -23,6 +25,7 @@ public class MaxCondProbReducer extends Reducer<Text, Text, Text, Text> {
         //按条件概率(value)的自然排序comparator进行排序，直接从Optional容器中取出Entry并拿出对应的键(对应的最大条件概率类别maxCls)
         maxCondProbCls.set(clsCondProbs.entrySet().stream().max(Map.Entry.comparingByValue()).get().getKey());
         //输出<docId, maxCls>
+        //logger.info("[Reducer]Generated reduce result <k-v>:=<"+key+"-"+maxCondProbCls+">");
         context.write(key, maxCondProbCls);
     }
 }

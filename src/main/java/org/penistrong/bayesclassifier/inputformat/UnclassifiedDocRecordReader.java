@@ -11,6 +11,8 @@ import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.lib.input.CombineFileSplit;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
+import org.apache.log4j.Logger;
+import org.penistrong.bayesclassifier.NaiveBayesClassifier;
 
 import java.io.IOException;
 
@@ -85,7 +87,6 @@ public class UnclassifiedDocRecordReader extends RecordReader<Text, Text> {
 
     @Override
     public void close() throws IOException {
-        //关闭文件系统
         fs.close();
     }
 }

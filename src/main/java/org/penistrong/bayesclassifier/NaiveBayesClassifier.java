@@ -1,29 +1,26 @@
 package org.penistrong.bayesclassifier;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.*;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.GenericOptionsParser;
+import org.apache.log4j.Logger;
 import org.penistrong.bayesclassifier.inputformat.UnclassifiedDocCombineInputFormat;
 import org.penistrong.bayesclassifier.mapper.ConditionalProbabilityMapper;
 import org.penistrong.bayesclassifier.reducer.MaxCondProbReducer;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.util.AbstractMap;
-import java.util.Hashtable;
-import java.util.Map;
+import java.io.*;
+import java.util.*;
 
 /**
  * 朴素贝叶斯分类器驱动类，包括利用存储于HDFS中的类别统计结果计算先验概率P(C_i)和后验概率P(d|C_i)的静态方法
  */
 public class NaiveBayesClassifier {
+    public static Logger logger = Logger.getLogger(NaiveBayesClassifier.class);
+
     //存储先验概率的哈希表，即<类别C_i， 先验概率P(C_i)>
     public static Hashtable<String, Float> prior = new Hashtable<>();
     //存储类型为C_i的文档中出现的总词数的HashTable
@@ -93,22 +90,21 @@ public class NaiveBayesClassifier {
             while ((line = line_reader.readLine()) != null) {
                 String[] classTermCount = line.split("\t");
                 //忽略异常行
-                if (classTermCount.length != 3) continue;
+                if (classTermCount.length != 3){
+                    logger.info("[**DEBUG**] Encounter an abnormal line...Skip this line : ["+line+"]");
+                    continue;
+                }
                 String cls = classTermCount[0];
                 String count = classTermCount[2];
                 //哈希表中没有该类别对应的键，初始化
                 if (!termCounts.containsKey(cls))
                     termCounts.put(cls, 0);
                 //更新总数, compute()函数只在给定的键存在时才会执行BiFunction
-                termCounts.compute(cls, (k, v) -> {
-                   return v + Integer.parseInt(count);
-                });
+                termCounts.compute(cls, (k, v) -> v + Integer.parseInt(count));
                 //更新该类别的词典大小
                 if (!classVocabSize.containsKey(cls))
                     classVocabSize.put(cls, 0);
-                classVocabSize.compute(cls, (k, v) -> {
-                    return v + 1;
-                });
+                classVocabSize.compute(cls, (k, v) -> v + 1);
             }
             line_reader.close();
             IOUtils.closeStream(in);
@@ -135,6 +131,33 @@ public class NaiveBayesClassifier {
         }
     }
 
+    //将哈希表序列化为二进制文件并存储到HDFS上以供位于别的节点上的不同JVM内的Mapper.class调用
+    public static void storeResultAnalysisOnHDFS(Configuration conf) throws IOException {
+        FileSystem fs = FileSystem.get(conf);
+        conf.set("prior", "/tmp/n-b-c-hashtables/prior");
+        FSDataOutputStream out = fs.create(new Path("/tmp/n-b-c-hashtables/prior"), true);
+        ObjectOutputStream oos = new ObjectOutputStream(out);
+        oos.writeObject(prior);
+        oos.close();
+        conf.set("termCounts", "/tmp/n-b-c-hashtables/termCounts");
+        out = fs.create(new Path("/tmp/n-b-c-hashtables/termCounts"), true);
+        oos = new ObjectOutputStream(out);
+        oos.writeObject(termCounts);
+        oos.close();
+        conf.set("classVocabSize", "/tmp/n-b-c-hashtables/classVocabSize");
+        out = fs.create(new Path("/tmp/n-b-c-hashtables/classVocabSize"), true);
+        oos = new ObjectOutputStream(out);
+        oos.writeObject(classVocabSize);
+        oos.close();
+        conf.set("posterior", "/tmp/n-b-c-hashtables/posterior");
+        out = fs.create(new Path("/tmp/n-b-c-hashtables/posterior"), true);
+        oos = new ObjectOutputStream(out);
+        oos.writeObject(posterior);
+        oos.close();
+        IOUtils.closeStream(out);
+        fs.close();
+    }
+
     public static void main(String[] args) throws Exception{
         Configuration conf = new Configuration();
         String[] givenArgs = new GenericOptionsParser(conf, args).getRemainingArgs();
@@ -153,10 +176,35 @@ public class NaiveBayesClassifier {
         calculatePrior(conf, new Path(givenArgs[0]));
         calculatePosterior(conf, new Path(givenArgs[1]));
 
+        //注意，由于是分布式集群，其他节点如果想要访问到存储相关信息的HashTable，不能跨JVM访问
+        //有一种跨JVM传递变量的方法，那就是在本驱动类中，将这些静态变量写入到JobConf的配置字段中
+        //在Mapper和Reducer中使用setup()方法，初始化这些字段即可得到这些变量
+        //但是，Configuration类提供的只是设置long,String等简单类型的配置字段，无法传递HashTable
+        //所以，将这些HashTable序列化为文件后存储到HDFS上，在Mapper的setup()阶段读取这些文件并反序列化即可
+        storeResultAnalysisOnHDFS(conf);
+
+        logger.info("[**DEBUG**] Executed static method to calculate prior and posterior!");
+        logger.info("[**DEBUG**] Total Class Num :" + prior.size());
+        int show_len = 10;
+        logger.info("[**DEBUG**] posterior Size is " + posterior.size() + ", show random " + show_len + " entries :");
+        for (Map.Entry<Map.Entry<String, String>, Float> entry : posterior.entrySet()) {
+            if (--show_len < 0)
+                break;
+            logger.info(entry.getKey().getKey() + ": " + entry.getKey().getValue() + "\t" + entry.getValue());
+        }
+
+        // 由于在datanode上运行的Mapper需要读取HDFS上的文件，使用的是同一个conf下得到的文件系统
+        // 当任务提交到集群上面以后，多个datanode在getFileSystem过程中，由于Configuration一样，会得到同一个FileSystem
+        // 如果有一个datanode在使用完关闭连接，其它的datanode在访问就会出现上述异常
+        // 禁用FileSystem内部的static cache即可
+        conf.setBoolean("fs.hdfs.impl.disable.cache", true);
+
         Job job = Job.getInstance(conf, "Naive Bayes Classifier");
         job.setJarByClass(NaiveBayesClassifier.class);
 
         job.setInputFormatClass(UnclassifiedDocCombineInputFormat.class);
+        UnclassifiedDocCombineInputFormat.setMaxInputSplitSize(job, 4194304);
+
         job.setMapperClass(ConditionalProbabilityMapper.class);
         job.setReducerClass(MaxCondProbReducer.class);
 
@@ -172,6 +220,10 @@ public class NaiveBayesClassifier {
         FileOutputFormat.setOutputPath(job, new Path(givenArgs[givenArgs.length - 1]));
 
         //执行Job
-        System.exit(job.waitForCompletion(true) ? 0 : 1);
+        if (!job.waitForCompletion(true))
+            System.exit(1);
+
+        //执行预测结果评估
+        Evaluator.evaluate(conf, new Path(givenArgs[2]), FileOutputFormat.getOutputPath(job));
     }
 }
