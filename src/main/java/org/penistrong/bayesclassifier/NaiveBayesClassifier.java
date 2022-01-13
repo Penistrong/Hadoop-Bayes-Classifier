@@ -203,6 +203,7 @@ public class NaiveBayesClassifier {
         job.setJarByClass(NaiveBayesClassifier.class);
 
         job.setInputFormatClass(UnclassifiedDocCombineInputFormat.class);
+        //设置每个CombineFileSplit切片的最大大小为4MB
         UnclassifiedDocCombineInputFormat.setMaxInputSplitSize(job, 4194304);
 
         job.setMapperClass(ConditionalProbabilityMapper.class);

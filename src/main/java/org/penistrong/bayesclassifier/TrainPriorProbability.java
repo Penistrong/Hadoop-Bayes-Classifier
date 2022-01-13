@@ -8,6 +8,7 @@ import org.apache.hadoop.mapreduce.*;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.GenericOptionsParser;
 import org.penistrong.bayesclassifier.inputformat.ClassFileSumCombineInputFormat;
+import org.penistrong.bayesclassifier.inputformat.ClassWordCountCombineTextInputFormat;
 
 import java.io.IOException;
 
@@ -69,6 +70,8 @@ public class TrainPriorProbability {
 
         //设置自定义InputFormat
         job.setInputFormatClass(ClassFileSumCombineInputFormat.class);
+        //设置每个切片的最大大小为4MB，防止所有训练集的所有小文件全部放到1个CombineSplit(这样导致只有1个Mapper运作)
+        ClassWordCountCombineTextInputFormat.setMaxInputSplitSize(job, 4194304);
         //设置Mapper,Combiner,Reducer
         job.setMapperClass(ClassFileSumMapper.class);
         job.setCombinerClass(ClassFileSumReducer.class);

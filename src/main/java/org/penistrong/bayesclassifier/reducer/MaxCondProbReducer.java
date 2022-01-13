@@ -2,8 +2,6 @@ package org.penistrong.bayesclassifier.reducer;
 
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Reducer;
-import org.apache.log4j.Logger;
-import org.penistrong.bayesclassifier.NaiveBayesClassifier;
 
 import java.io.IOException;
 import java.util.*;
